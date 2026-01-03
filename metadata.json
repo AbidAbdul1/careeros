@@ -1,0 +1,8 @@
+{
+  "name": "CareerOS",
+  "description": "An AI career operating system for students and freshers. Turn any job post into a tailored resume, learning roadmap, ATS application, and interview preparation through a single chat interface.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
