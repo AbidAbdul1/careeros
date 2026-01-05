@@ -306,19 +306,51 @@ export async function processChat(
 ): Promise<GenerateContentResponse> {
   const parts: any[] = [{ text: input }];
   if (fileData) parts.push({ inlineData: { data: fileData.data, mimeType: fileData.mimeType } });
-  const modelToUse = isFastRequest ? MODEL_FLASH : MODEL_PRO;
-  return await ai.models.generateContent({
-    model: modelToUse,
-    contents: [...history, { role: 'user', parts: parts }],
-    config: {
-      systemInstruction: `You are CareerOS. 
-      CORE MISSION: Turn any job post into a tailored application.
-      PROJECTS: The Projects section uses a PPT Generator to visualize ideas. When the user asks to generate a project or slide deck, use 'generateProjectsPPT'.
-      ROADMAPS: You MUST include YouTube playlist links and specific course URLs in the recommendedResources field.
-      VISUALS: Header in the Projects view must say 'PROJECTS'.`,
-      tools: [{ functionDeclarations: TOOLS_LIST }, { googleSearch: {} }]
+  const initialModel = isFastRequest ? MODEL_FLASH : MODEL_PRO;
+  let currentModel = initialModel;
+
+  const maxRetries = 3;
+  let lastError: any;
+
+  function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+  function parseRetryDelay(err: any): number {
+    const seconds = err?.error?.details?.find((d: any) => d?.['@type']?.includes('RetryInfo'))?.retryDelay?.replace('s', '') ?? '5';
+    const ms = Number(seconds) * 1000;
+    return Number.isFinite(ms) ? ms : 5000;
+  }
+  function isQuotaError(err: any) {
+    return err?.error?.code === 429 || err?.error?.status === 'RESOURCE_EXHAUSTED';
+  }
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await ai.models.generateContent({
+        model: currentModel,
+        contents: [...history, { role: 'user', parts: parts }],
+        config: {
+          systemInstruction: `You are CareerOS. 
+          CORE MISSION: Turn any job post into a tailored application.
+          PROJECTS: The Projects section uses a PPT Generator to visualize ideas. When the user asks to generate a project or slide deck, use 'generateProjectsPPT'.
+          ROADMAPS: You MUST include YouTube playlist links and specific course URLs in the recommendedResources field.
+          VISUALS: Header in the Projects view must say 'PROJECTS'.`,
+          tools: [{ functionDeclarations: TOOLS_LIST }, { googleSearch: {} }]
+        }
+      });
+    } catch (err: any) {
+      lastError = err;
+      if (isQuotaError(err)) {
+        if (currentModel === MODEL_PRO) {
+          currentModel = MODEL_FLASH;
+        }
+        const delay = parseRetryDelay(err) * Math.pow(2, attempt);
+        await sleep(delay);
+        continue;
+      }
+      throw err;
     }
-  });
+  }
+
+  throw lastError;
 }
 
 export function getGenAI() { return new GoogleGenAI({ apiKey: process.env.API_KEY }); }
